@@ -1,0 +1,5 @@
+.cabal-sandbox
+*.csv
+dist/
+Setup.hs
+cabal.sandbox.config
