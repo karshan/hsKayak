@@ -10,17 +10,16 @@ import Network.HTTP.Client.TLS (mkManagerSettings)
 import Network.Wreq (Options, postWith, getWith, proxy, manager, httpProxy, responseBody)
 import qualified Network.Wreq as W (FormParam((:=)), defaults)
 import Network.Wreq.Types (Postable)
-import Data.Tree.NTree.TypeDefs (NTree)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Text.XML.Light
-import Text.XML.HXT.Core
+import Text.XML.Light (parseXML, onlyElems, findAttr, QName(..), Element, filterElement, filterElements, strContent, elChildren)
+import Text.XML.Light.Lexer (XmlSource)
 
 -- Utils
 (^=) :: BS.ByteString -> BS.ByteString -> W.FormParam
 (^=) = (W.:=)
 
 defOpts :: Options
-defOpts = W.defaults
+defOpts = proxyDefaults
 
 proxyDefaults :: Options
 proxyDefaults = W.defaults & proxy .~ httpProxy "localhost" 8080 & manager .~ Left (mkManagerSettings (TLSSettingsSimple True False False) Nothing)
@@ -31,13 +30,10 @@ post url params = (^. responseBody) `fmap` postWith defOpts url params
 get :: String -> IO LBS.ByteString
 get url = (^. responseBody) `fmap` getWith defOpts url
 
-css :: ArrowXml a => String -> a (NTree XNode) XmlTree
-css tag = multi (hasName tag)
-
 safeHead :: [a] -> Maybe a
 safeHead = listToMaybe
 
-toQName :: String -> Text.XML.Light.QName
+toQName :: String -> QName
 toQName s = QName s Nothing Nothing
 
 hasAttrVal :: String -> String -> Element -> Bool
@@ -55,18 +51,18 @@ resultRowToItenerary r = do
     let legs' = map strContent $ filterElements (hasAttrValBy "id" ("legdata" `isPrefixOf`)) r
     return $ Itenerary price' legs'
 
-getIteneraries :: String -> Maybe [Itenerary]
+getIteneraries :: XmlSource s => s -> Maybe [Itenerary]
 getIteneraries x = do
     c <- find (hasAttrVal "id" "content_div") $ onlyElems $ parseXML x
     let resultRows = elChildren c
     return $ mapMaybe resultRowToItenerary resultRows
 
-getOriginsId :: String -> String
+getOriginsId :: XmlSource s => s -> String
 getOriginsId = fromMaybe (error "getOriginsId") . (=<<) (findAttr (toQName "value")) . safeHead . mapMaybe (filterElement (hasAttrVal "name" "originsid")) . onlyElems . parseXML
 
 getPrice :: String -> String -> String -> String -> IO (Maybe [Itenerary])
 getPrice orig dest dep ret = do
-    originsid <- (BS.pack . getOriginsId . LBS.unpack) `fmap` get ("http://www.kayak.com/flights/" ++ orig ++ "-" ++ dest ++ "/" ++ dep ++ "/" ++ ret)
+    originsid <- (BS.pack . getOriginsId) `fmap` get ("http://www.kayak.com/flights/" ++ orig ++ "-" ++ dest ++ "/" ++ dep ++ "/" ++ ret)
     now <- round `fmap` getPOSIXTime :: IO Int
     results <- post ("http://www.kayak.com/s/jspoll?ss=1&poll=1&final=false&updateStamp=" ++ show now)
                 [ "lmname" ^= "", "lmname2" ^= "", "c" ^= "15", "s" ^= "price", "searchid" ^= originsid, "itd" ^= "", "poll" ^= "1", "seo" ^= "false", "vw" ^= "list", "urlViewState" ^= "", "streaming" ^= "false"]
@@ -74,5 +70,5 @@ getPrice orig dest dep ret = do
 
 main :: IO ()
 main = do
-    iteneraries <- getPrice "SJC" "ORD" "2014-08-30" "2014-09-01" 
+    iteneraries <- getPrice "IAD" "ORD" "2014-08-30" "2014-09-01" 
     print iteneraries
